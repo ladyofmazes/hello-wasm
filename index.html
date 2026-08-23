@@ -5,8 +5,15 @@
     <title>Simple template</title>
   </head>
   <body>
+    <script type="importmap">
+    {
+        "imports": {
+            "webtorrent": "https://esm.sh"
+        }
+    }
+    </script>
     <script type='module'>
-      import WebTorrent from 'https://esm.sh'
+      import WebTorrent from 'webtorrent'
 
       const client = new WebTorrent()
 
