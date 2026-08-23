@@ -15,10 +15,41 @@
       // Sintel, a free, Creative Commons movie
       const torrentId = 'magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Fexplodie.org%3A6969&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969&tr=udp%3A%2F%2Ftracker.empire-js.us%3A1337&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337&tr=wss%3A%2F%2Ftracker.btorrent.xyz&tr=wss%3A%2F%2Ftracker.fastcast.nz&tr=wss%3A%2F%2Ftracker.openwebtorrent.com&ws=https%3A%2F%2Fwebtorrent.io%2Ftorrents%2F&xs=https%3A%2F%2Fwebtorrent.io%2Ftorrents%2Fsintel.torrent'
 
-      // Service worker must be same-origin, so sw.min.js is served from this site.
-      const controller = await navigator.serviceWorker.register('./sw.min.js', { scope: './' })
+      // Service worker must be same-origin. ready is not enough: Firefox can
+      // resolve it before this page is controlled, and /webtorrent/* then 404s
+      // on the Cloudflare origin instead of being intercepted.
+      const registration = await navigator.serviceWorker.register('./sw.min.js', {
+        scope: './',
+        updateViaCache: 'none'
+      })
+      const installing = registration.installing || registration.waiting
+      if (installing && installing.state !== 'activated') {
+        await new Promise(resolve => {
+          installing.addEventListener('statechange', () => {
+            if (installing.state === 'activated') resolve()
+          })
+        })
+      }
       await navigator.serviceWorker.ready
-      client.createServer({ controller })
+      if (!navigator.serviceWorker.controller) {
+        await Promise.race([
+          new Promise(resolve => {
+            navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })
+          }),
+          new Promise(resolve => setTimeout(resolve, 1500))
+        ])
+      }
+      if (!navigator.serviceWorker.controller) {
+        if (!sessionStorage.getItem('wt-sw-reload')) {
+          sessionStorage.setItem('wt-sw-reload', '1')
+          location.reload()
+          throw new Error('Reloading so the service worker can control this page')
+        }
+      } else {
+        sessionStorage.removeItem('wt-sw-reload')
+      }
+
+      client.createServer({ controller: registration })
 
       client.add(torrentId, torrent => {
         // Torrents can contain many files. Let's use the .mp4 file
@@ -26,9 +57,15 @@
           return file.name.endsWith('.mp4')
         })
 
+        const video = document.querySelector('video')
         // Display the file by adding it to the DOM.
         // Supports video, audio, image files, and more!
-        file.streamTo(document.querySelector('video'))
+        file.streamTo(video)
+        // If the worker still does not intercept, play from a blob once downloaded.
+        video.addEventListener('error', async () => {
+          const blob = await file.blob()
+          video.src = URL.createObjectURL(blob)
+        }, { once: true })
       })
     </script>
     <script>
